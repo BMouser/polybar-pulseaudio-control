@@ -7,6 +7,7 @@
 
 # Defaults for configurable values, expected to be set by command-line arguments
 AUTOSYNC="no"
+AUDIO_TYPE="sink"
 COLOR_MUTED="%{F#6b6b6b}"
 ICON_MUTED=
 ICON_SINK=
@@ -30,20 +31,42 @@ LANGUAGE=en_US  # Some calls depend on English outputs of pactl
 # return an error code when pulseaudio isn't running.
 function getCurSink() {
     if ! pulseaudio --check; then return 1; fi
-    curSink=$(pacmd list-sinks | awk '/\* index:/{print $3}')
+    if [ $AUDIO_TYPE = "sink" ]; then
+      curSink=$(pacmd list-sinks | awk '/\* index:/{print $3}')
+    elif [ $AUDIO_TYPE = "source" ]; then
+      curSink=$(pacmd list-sources | awk '/\* index:/{print $3}')
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+    fi
 }
 
 
 # Saves the sink passed by parameter's volume into a variable named `VOL_LEVEL`.
 function getCurVol() {
-    VOL_LEVEL=$(pacmd list-sinks | grep -A 15 'index: '"$1"'' | grep 'volume:' | grep -E -v 'base volume:' | awk -F : '{print $3; exit}' | grep -o -P '.{0,3}%' | sed 's/.$//' | tr -d ' ')
+    if [ $AUDIO_TYPE = "sink" ]; then
+      VOL_LEVEL=$(pacmd list-sinks | grep -A 15 'index: '"$1"'' | grep 'volume:' | grep -E -v 'base volume:' | awk -F : '{print $3; exit}' | grep -o -P '.{0,3}%' | sed 's/.$//' | tr -d ' ')
+    elif [ $AUDIO_TYPE = "source" ]; then
+      VOL_LEVEL=$(pacmd list-sources | grep -A 15 'index: '"$1"'' | grep 'volume:' | grep -E -v 'base volume:' | awk -F : '{print $3; exit}' | grep -o -P '.{0,3}%' | sed 's/.$//' | tr -d ' ')
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+    fi
 }
 
 
 # Saves the name of the sink passed by parameter into a variable named
 # `sinkName`.
 function getSinkName() {
-    sinkName=$(pactl list sinks short | awk -v sink="$1" '{ if ($1 == sink) {print $2} }')
+    if [ $AUDIO_TYPE = "sink" ]; then
+      sinkName=$(pactl list sinks short | awk -v sink="$1" '{ if ($1 == sink) {print $2} }')
+    elif [ $AUDIO_TYPE = "source" ]; then
+      sinkName=$(pactl list sources short | awk -v sink="$1" '{ if ($1 == sink) {print $2} }')
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+    fi
+
 }
 
 
@@ -88,20 +111,42 @@ function getNicknameFromProp() {
                 break
                 ;;
         esac
-    done < <(pacmd list-sinks)
+    done < <(if [ $AUDIO_TYPE = "sink" ]; then
+      pacmd list-sinks
+    elif [ $AUDIO_TYPE = "source" ]; then
+      pacmd list-sources
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+      fi)
 }
 
 # Saves the status of the sink passed by parameter into a variable named
 # `isMuted`.
 function getIsMuted() {
-    isMuted=$(pacmd list-sinks | grep -A 15 "index: $1" | awk '/muted/ {print $2; exit}')
+    if [ $AUDIO_TYPE = "sink" ]; then
+      isMuted=$(pacmd list-sinks | grep -A 15 "index: $1" | awk '/muted/ {print $2; exit}')
+    elif [ $AUDIO_TYPE = "source" ]; then
+      isMuted=$(pacmd list-sources | grep -A 15 "index: $1" | awk '/muted/ {print $2; exit}')
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+    fi
 }
 
 
 # Saves all the sink inputs of the sink passed by parameter into a string
 # named `sinkInputs`.
 function getSinkInputs() {
-    sinkInputs=$(pacmd list-sink-inputs | grep -B 4 "sink: $1 " | awk '/index:/{print $2}')
+    if [ $AUDIO_TYPE = "sink" ]; then
+      sinkInputs=$(pacmd list-sink-inputs | grep -B 4 "sink: $1 " | awk '/index:/{print $2}')
+    elif [ $AUDIO_TYPE = "source" ]; then
+      sinkInputs=$(pacmd list-source-outputs | grep -B 4 "source: $1 " | awk '/index:/{print $2}')
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+    fi
+
 }
 
 
@@ -118,9 +163,23 @@ function volUp() {
     # increase percentage was 3%, a 99% volume would top at 100% instead
     # of 102%. If the volume is above the maximum limit, nothing is done.
     if [ "$VOL_LEVEL" -le "$VOLUME_MAX" ] && [ "$VOL_LEVEL" -ge "$maxLimit" ]; then
-        pactl set-sink-volume "$curSink" "$VOLUME_MAX%"
+        if [ $AUDIO_TYPE = "sink" ]; then
+          pactl set-sink-volume "$curSink" "$VOLUME_MAX%"
+        elif [ $AUDIO_TYPE = "source" ]; then
+          pactl set-source-volume "$curSink" "$VOLUME_MAX%"
+        else
+          echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+          exit 1
+        fi
     elif [ "$VOL_LEVEL" -lt "$maxLimit" ]; then
-        pactl set-sink-volume "$curSink" "+$VOLUME_STEP%"
+         if [ $AUDIO_TYPE = "sink" ]; then
+          pactl set-sink-volume "$curSink" "+$VOLUME_STEP%"
+        elif [ $AUDIO_TYPE = "source" ]; then
+          pactl set-source-volume "$curSink" "+$VOLUME_STEP%"
+        else
+          echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+          exit 1
+        fi
     fi
 
     if [ $OSD = "yes" ]; then showOSD "$curSink"; fi
@@ -135,7 +194,17 @@ function volDown() {
         echo "PulseAudio not running"
         return 1
     fi
-    pactl set-sink-volume "$curSink" "-$VOLUME_STEP%"
+    echo "$curSink"
+    echo $AUDIO_TYPE
+    if [ $AUDIO_TYPE = "sink" ]; then
+        pactl set-sink-volume "$curSink" "-$VOLUME_STEP%"
+    elif [ $AUDIO_TYPE = "source" ]; then
+        pactl set-source-volume "$curSink" "-$VOLUME_STEP%"
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+    fi
+
 
     if [ $OSD = "yes" ]; then showOSD "$curSink"; fi
     if [ $AUTOSYNC = "yes" ]; then volSync; fi
@@ -153,7 +222,14 @@ function volSync() {
     # Every output found in the active sink has their volume set to the
     # current one. This will only be called if $AUTOSYNC is `yes`.
     for each in $sinkInputs; do
+      if [ $AUDIO_TYPE = "sink" ]; then
         pactl set-sink-input-volume "$each" "$VOL_LEVEL%"
+      elif [ $AUDIO_TYPE = "source" ]; then
+        pactl set-source-input-volume "$each" "$VOL_LEVEL%"
+      else
+        echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+        exit 1
+      fi
     done
 }
 
@@ -164,17 +240,48 @@ function volMute() {
         echo "PulseAudio not running"
         return 1
     fi
+    echo "AUDIO $AUDIO_TYPE"
     if [ "$1" = "toggle" ]; then
+        echo AUDIO $AUDIO_TYPE
         getIsMuted "$curSink"
         if [ "$isMuted" = "yes" ]; then
-            pactl set-sink-mute "$curSink" "no"
+            if [ $AUDIO_TYPE = "sink" ]; then
+                pactl set-sink-mute "$curSink" "no"
+            elif [ $AUDIO_TYPE = "source" ]; then
+                pactl set-source-mute "$curSink" "no"
+            else
+                echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+                exit 1
+            fi
         else
-            pactl set-sink-mute "$curSink" "yes"
+            if [ $AUDIO_TYPE = "sink" ]; then
+                pactl set-sink-mute "$curSink" "yes"
+            elif [ $AUDIO_TYPE = "source" ]; then
+                pactl set-source-mute "$curSink" "yes"
+            else
+                echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+                exit 1
+            fi
+
         fi
     elif [ "$1" = "mute" ]; then
-        pactl set-sink-mute "$curSink" "yes"
+        if [ $AUDIO_TYPE = "sink" ]; then
+            pactl set-sink-mute "$curSink" "yes"
+        elif [ $AUDIO_TYPE = "source" ]; then
+            pactl set-source-mute "$curSink" "yes"
+        else
+            echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+            exit 1
+        fi
     elif [ "$1" = "unmute" ]; then
-        pactl set-sink-mute "$curSink" "no"
+        if [ $AUDIO_TYPE = "sink" ]; then
+            pactl set-sink-mute "$curSink" "no"
+        elif [ $AUDIO_TYPE = "source" ]; then
+            pactl set-source-mute "$curSink" "no"
+        else
+            echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+            exit 1
+        fi
     fi
 
     if [ $OSD = "yes" ]; then showOSD "$curSink"; fi
@@ -207,7 +314,15 @@ function nextSink() {
 
         sinks[$i]="$index"
         i=$((i + 1))
-    done < <(pactl list short sinks)
+    done < <(if [ $AUDIO_TYPE = "sink" ]; then
+      pacmd list short sinks
+    elif [ $AUDIO_TYPE = "source" ]; then
+      pacmd list short sources
+    else
+      echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+      exit 1
+      fi)
+
 
     # If the resulting list is empty, nothing is done
     if [ ${#sinks[@]} -eq 0 ]; then return; fi
@@ -231,9 +346,24 @@ function nextSink() {
 
     # Move all audio threads to new sink
     local inputs
-    inputs="$(pactl list short sink-inputs | cut -f 1)"
+    if [ $AUDIO_TYPE = "sink" ]; then
+        inputs="$(pactl list short sink-inputs | cut -f 1)"
+    elif [ $AUDIO_TYPE = "source" ]; then
+        inputs="$(pactl list short source-outputs | cut -f 1)"
+    else
+        echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+        exit 1
+    fi
+
     for i in $inputs; do
-        pacmd move-sink-input "$i" "$newSink"
+        if [ $AUDIO_TYPE = "sink" ]; then
+            pacmd move-sink-input "$i" "$newSink"
+        elif [ $AUDIO_TYPE = "source" ]; then
+            pacmd move-source-output "$i" "$newSink"
+        else
+            echo "UNKNOWN AUDIO_TYPE=${AUDIO_TYPE}"
+            exit 1
+        fi
     done
 
     if [ $NOTIFICATIONS = "yes" ]; then
@@ -280,7 +410,7 @@ function listen() {
                 else
                     read -r event || break
                     # Avoid double events
-                    if ! echo "$event" | grep -e "on card" -e "on sink" -e "on server"; then
+                    if ! echo "$event" | grep -e "on card" -e "on ${AUDIO_TYPE}" -e "on server"; then
                         continue
                     fi
                 fi
@@ -333,6 +463,8 @@ Usage: $0 [OPTION...] ACTION
 Options: [defaults]
   --autosync | --no-autosync            whether to maintain same volume for all
                                         programs [$AUTOSYNC]
+  --sink | --source                     whether the manage sources or sinks
+                                        programs [$AUDIO_TYPE]
   --color-muted <rrggbb>                color in which to format when muted
                                         [${COLOR_MUTED:4:-1}]
   --notifications | --no-notifications  whether to show notifications when
@@ -387,6 +519,7 @@ More info on GitHub:
 while [[ "$1" = --* ]]; do
     unset arg
     unset val
+    unset has_value
     if [[ "$1" = *=* ]]; then
         arg="${1//=*/}"
         val="${1//*=/}"
@@ -396,31 +529,46 @@ while [[ "$1" = --* ]]; do
         # Support space-separated values, but also value-less flags
         if [[ "$2" != --* ]]; then
             val="$2"
-            shift
+            has_value=true
         fi
         shift
     fi
 
     case "$arg" in
+        --sink)
+            AUDIO_TYPE="sink"
+            has_value=false
+            ;;
+        --source)
+            AUDIO_TYPE="source"
+            echo "$arg and $val"
+            has_value=false
+            ;;
         --autosync)
             AUTOSYNC=yes
+            has_value=false
             ;;
         --no-autosync)
             AUTOSYNC=no
+            has_value=false
             ;;
         --color-muted|--colour-muted)
             COLOR_MUTED="%{F#$val}"
             ;;
         --notifications)
             NOTIFICATIONS=yes
+            has_value=false
             ;;
         --no-notifications)
             NOTIFICATIONS=no
+            has_value=false
             ;;
         --osd)
+            has_value=false
             OSD=yes
             ;;
         --no-osd)
+            has_value=false
             OSD=no
             ;;
         --icon-muted)
@@ -449,13 +597,16 @@ while [[ "$1" = --* ]]; do
             SINK_NICKNAMES["${val//:*/}"]="${val//*:}"
             ;;
         --format)
-	    FORMAT="$val"
+            FORMAT="$val"
             ;;
         *)
             echo "Unrecognised option: $arg" >&2
             exit 1
             ;;
     esac
+    if [ "$has_value" = true ]; then
+      shift
+    fi
 done
 
 case "$1" in
